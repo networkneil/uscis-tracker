@@ -100,6 +100,7 @@
     let currentData = null;
     let themeAuto = true;
 
+
     // ─────────────────────────────────────────────────────────────
     // TIMEZONE UTILITIES  (use Intl API — DST-aware)
     // ─────────────────────────────────────────────────────────────
@@ -147,14 +148,78 @@
       return Math.round(Math.abs(new Date(b) - new Date(a)) / 86400000);
     }
 
-    function getInfo(code) {
-      return EVENT_CODES[code] || {
-        name: `Event: ${code}`,
-        desc: `USCIS internal event code "${code}". Refer to NIEM scr:BenefitDocumentStatusCategoryCodeSimpleType v5.0 schema for the full definition.`,
-        cat: 'default'
-      };
+    function getCardInfo(formType) {
+      const ft = (formType || '').toUpperCase();
+      if (ft === 'I-485') {
+        return {
+          short: 'Green Card',
+          full: 'Permanent Resident Card (Green Card)',
+          welcomeText: 'Lawful Permanent Resident (LPR / Green Card) status has been officially granted'
+        };
+      } else if (ft === 'I-765') {
+        return {
+          short: 'EAD Card',
+          full: 'Employment Authorization Document (EAD Card)',
+          welcomeText: 'Employment Authorization status has been officially granted'
+        };
+      } else if (ft === 'I-131') {
+        return {
+          short: 'Travel Document',
+          full: 'Travel Document (Advance Parole)',
+          welcomeText: 'Travel authorization has been officially granted'
+        };
+      } else {
+        return {
+          short: 'Document/Card',
+          full: 'Document or Card',
+          welcomeText: 'benefits have been officially granted'
+        };
+      }
     }
-    function getCatStyle(cat) { return CAT_STYLE[cat] || CAT_STYLE.default; }
+
+    function getInfo(code, formType) {
+      const rawInfo = EVENT_CODES[code];
+      if (!rawInfo) {
+        return {
+          name: `Event: ${code}`,
+          desc: `USCIS internal event code "${code}". Refer to NIEM scr:BenefitDocumentStatusCategoryCodeSimpleType v5.0 schema for the full definition.`,
+          cat: 'default'
+        };
+      }
+
+      if (formType) {
+        const cardInfo = getCardInfo(formType);
+        let name = rawInfo.name;
+        let desc = rawInfo.desc;
+
+        name = name.replace(/Green Card/g, cardInfo.short);
+        
+        desc = desc.replace(/The Permanent Resident Card \(Green Card\)/gi, `The ${cardInfo.full}`);
+        desc = desc.replace(/Permanent Resident Card \(Green Card\)/gi, cardInfo.full);
+        desc = desc.replace(/Green Card/gi, cardInfo.short);
+        desc = desc.replace(/particularly Form I-485 \(Application to Register Permanent Residence or Adjust Status\)/gi, `particularly Form ${formType}`);
+        desc = desc.replace(/Lawful Permanent Resident \(LPR \/ Green Card\) status has been officially granted/gi, cardInfo.welcomeText);
+
+        return {
+          name: name,
+          desc: desc,
+          cat: rawInfo.cat
+        };
+      }
+
+      return rawInfo;
+    }
+
+    function getCatStyle(cat, formType) {
+      const style = CAT_STYLE[cat] || CAT_STYLE.default;
+      if (cat === 'card' && formType) {
+        return {
+          ...style,
+          label: getCardInfo(formType).short
+        };
+      }
+      return style;
+    }
 
     // ─────────────────────────────────────────────────────────────
     // LIVE CLOCK  (updates header every 10s)
@@ -169,6 +234,8 @@
     // TIMEZONE DETECTION & CHANGE
     // ─────────────────────────────────────────────────────────────
     function detectUserTZ() {
+      // Default to Central Time (CT) — CST/CDT
+      // No geolocation or device timezone detection; user can change via the dropdown
       const select = document.getElementById('tzSelect');
       select.value = 'America/Chicago';
       selectedTZ = 'America/Chicago';
@@ -185,6 +252,7 @@
     // THEME MANAGEMENT
     // ─────────────────────────────────────────────────────────────
     function applyAutoTheme() {
+      // Get current hour in the selected timezone (no geolocation needed)
       try {
         const nowInTZ = new Date().toLocaleString('en-US', { timeZone: selectedTZ, hour12: false, hour: '2-digit', minute: '2-digit' });
         const [h, m] = nowInTZ.split(':').map(Number);
@@ -192,6 +260,7 @@
         const isDaytime = (nowH >= 7 && nowH < 19);
         setTheme(isDaytime ? 'light' : 'dark');
       } catch {
+        // Fallback: use device local time
         const nowH = new Date().getHours() + new Date().getMinutes() / 60;
         setTheme((nowH >= 7 && nowH < 19) ? 'light' : 'dark');
       }
@@ -230,6 +299,8 @@
         localStorage.setItem('uscis-theme-auto', '0');
       }
     }
+
+
 
     function initTheme() {
       const savedAuto = localStorage.getItem('uscis-theme-auto');
@@ -310,6 +381,8 @@
       const today = new Date();
       const codes = events.map(e => e.eventCode);
 
+      // ── Stat bar ────────────────────────────────────────────
+      // Smart days calculation: use case close date when closed, else today
       const isClosed = d.closed === true;
       const isApproved = codes.some(c => ['DA', 'DH', 'IEA', 'IEE', 'IEC', 'H008'].includes(c));
       const isDenied = codes.some(c => ['EA', 'IFA'].includes(c));
@@ -317,10 +390,12 @@
 
       let daysSub, daysLabel, daysTitle;
       if (caseEnded && updTs) {
+        // Case is resolved — count days from filing to the last recorded update
         daysSub = daysBetween(subTs, updTs);
         daysLabel = 'Days (Filing → Close)';
         daysTitle = `Calculated from submission date to last case update (${fmtDateInTZ(updTs, tz)}) — case is closed/decided.`;
       } else {
+        // Case still open — count from filing to right now
         daysSub = daysBetween(subTs, today);
         daysLabel = 'Days Since Filing';
         daysTitle = `Calculated from submission date to today (${fmtDateInTZ(today, tz)}) — case is still in progress.`;
@@ -333,13 +408,13 @@
         { val: d.formType || '—', lbl: 'Form Type', title: d.formName || '' },
       ].map(s => `<div class="stat-pill" title="${s.title || ''}"><div class="stat-pill-val">${s.val}</div><div class="stat-pill-label">${s.lbl}</div></div>`).join('');
 
+      // ── Case Details cards ──────────────────────────────────
       const f = ts => fmtFullInTZ(ts, tz);
       const badge = (cls, dot, txt) => `<span class="badge ${cls}"><span class="dot"></span>${txt}</span>`;
       const openBadge = d.closed === false ? badge('badge-green', '', 'Open &amp; Active') : badge('badge-gray', '', 'Closed');
       const adjBadge = d.ackedByAdjudicatorAndCms ? badge('badge-gold', '', 'Ack\'d by Adjudicator &amp; CMS') : badge('badge-gray', '', 'Pending');
       const premBadge = d.isPremiumProcessed ? badge('badge-purple', '', 'Premium Processing') : badge('badge-gray', '', 'Standard Processing');
       const grpBadge = d.areAllGroupStatusesComplete ? badge('badge-green', '', 'All Complete') : badge('badge-orange', '', 'Pending');
-      const travelBadge = d.areAllGroupMembersAuthorizedForTravel ? badge('badge-green', '', 'Authorized') : badge('badge-gray', '', 'Not Yet Authorized');
       const actionBadge = d.actionRequired ? badge('badge-red', '', 'Action Required!') : badge('badge-green', '', 'No Action Needed');
       const rfeBadge = (d.evidenceRequests || []).length > 0 ? badge('badge-red', '', 'Evidence Requested') : badge('badge-green', '', 'None Pending');
 
@@ -360,11 +435,11 @@
       <div class="detail-row"><span class="detail-key">Adjudicator Status</span><span class="detail-val">${adjBadge}</span></div>
       <div class="detail-row"><span class="detail-key">Processing Type</span><span class="detail-val">${premBadge}</span></div>
       <div class="detail-row"><span class="detail-key">Group Status</span><span class="detail-val">${grpBadge}</span></div>
-      <div class="detail-row"><span class="detail-key">Travel Authorization</span><span class="detail-val">${travelBadge}</span></div>
       <div class="detail-row"><span class="detail-key">Action Required</span><span class="detail-val">${actionBadge}</span></div>
       <div class="detail-row"><span class="detail-key">Evidence Requests</span><span class="detail-val">${rfeBadge}</span></div>
     </div>`;
 
+      // ── Notices ─────────────────────────────────────────────
       if (notices.length > 0) {
         document.getElementById('noticesSection').style.display = 'block';
         const sorted = [...notices].sort((a, b) => new Date(b.generationDate) - new Date(a.generationDate));
@@ -381,7 +456,11 @@
         document.getElementById('noticesSection').style.display = 'none';
       }
 
+      // ── Timeline ─────────────────────────────────────────────
+      // Build unified list: events + submission + silent update (if updatedAt > last event)
+      // Find the first event to get the original submission eventTimestamp
       const submitEvent = events.find(ev => ev.eventCode === 'IAF' || ev.eventCode === 'IAA' || ev.eventCode === 'AALB');
+      // For submission, use eventTimestamp (Zulu/fixed filing date) — not affected by timezone
       const submissionDisplayTs = submitEvent ? (submitEvent.eventTimestamp || submitEvent.eventDateTime || subTs) : subTs;
 
       const allItems = [
@@ -402,6 +481,7 @@
         },
       ];
 
+      // Add silent update if updatedAt is strictly after the most recent event
       if (updTs) {
         const updTime = new Date(updTs);
         const maxEvTime = events.reduce((m, ev) => {
@@ -418,6 +498,7 @@
         }
       }
 
+      // Sort newest → oldest
       allItems.sort((a, b) => new Date(b.sortTs) - new Date(a.sortTs));
 
       const tlHTML = allItems.map((item, i) => {
@@ -426,29 +507,80 @@
         const timeStr = fmtTimeInTZ(item.displayTs, tz);
 
         if (item.type === 'submission') {
+          // Submission uses eventTimestamp (Zulu time) — fixed filing date regardless of timezone
           const subDateStr = fmtDateInTZ(item.displayTs, 'UTC');
           const subTimeStr = fmtTimeInTZ(item.displayTs, 'UTC');
-          return `<div class="timeline-item"><div class="tl-date"><div class="tl-date-main">${subDateStr}</div><div class="tl-date-time">${subTimeStr}</div></div><div class="tl-spine"><div class="tl-dot" style="border-color:var(--blue);background:var(--blue)"></div>${isLast ? '' : '<div class="tl-line"></div>'}</div><div class="tl-content"><div class="tl-content-top"><div class="tl-event-name">Application Filed &amp; Submitted</div><span class="tl-event-code">SUBMIT</span></div><div class="tl-badges"><span class="badge badge-blue">Filing</span></div><div class="tl-event-desc">The <strong>${d.formType || 'I-485'}</strong> application was submitted to USCIS via <strong>${d.elisChannelType || 'Lockbox'}</strong> and entered into the ELIS system. Receipt number assigned: <strong>${d.receiptNumber || '—'}</strong>.</div><div class="tl-event-id">Filing date shown in UTC (Zulu time) — fixed submission date regardless of timezone</div></div></div>`;
+          return `
+        <div class="timeline-item">
+          <div class="tl-date"><div class="tl-date-main">${subDateStr}</div><div class="tl-date-time">${subTimeStr}</div></div>
+          <div class="tl-spine"><div class="tl-dot" style="border-color:var(--blue);background:var(--blue)"></div>${isLast ? '' : '<div class="tl-line"></div>'}</div>
+          <div class="tl-content">
+            <div class="tl-content-top"><div class="tl-event-name">Application Filed &amp; Submitted</div><span class="tl-event-code">SUBMIT</span></div>
+            <div class="tl-badges"><span class="badge badge-blue">Filing</span></div>
+            <div class="tl-event-desc">
+              The <strong>${d.formType || 'I-485'}</strong> application was submitted to USCIS via <strong>${d.elisChannelType || 'Lockbox'}</strong> and entered into the ELIS system.
+              Receipt number assigned: <strong>${d.receiptNumber || '—'}</strong>.
+            </div>
+            <div class="tl-event-id">Filing date shown in UTC (Zulu time) — fixed submission date regardless of timezone</div>
+          </div>
+        </div>`;
         }
 
         if (item.type === 'silent-update') {
-          return `<div class="timeline-item"><div class="tl-date"><div class="tl-date-main">${dateStr}</div><div class="tl-date-time">${timeStr}</div></div><div class="tl-spine"><div class="tl-dot" style="border-color:var(--purple);background:var(--purple)"></div>${isLast ? '' : '<div class="tl-line"></div>'}</div><div class="tl-content"><div class="tl-content-top"><div><div class="tl-event-name">Silent Case Update</div><div class="tl-badges"><span class="badge badge-purple">Officer Touch</span></div></div><span class="tl-silent-code">SILENT-UPDATE</span></div><div class="tl-event-desc">The case record was updated by USCIS without a formal recorded event code. This typically indicates an officer touched or reviewed the case — such as a supervisory update, internal system note, or case reassignment — that did not generate a standard ELIS event entry.</div><div class="tl-event-id">Source: updatedAtTimestamp field in case record</div></div></div>`;
+          return `
+        <div class="timeline-item">
+          <div class="tl-date"><div class="tl-date-main">${dateStr}</div><div class="tl-date-time">${timeStr}</div></div>
+          <div class="tl-spine"><div class="tl-dot" style="border-color:var(--purple);background:var(--purple)"></div>${isLast ? '' : '<div class="tl-line"></div>'}</div>
+          <div class="tl-content">
+            <div class="tl-content-top">
+              <div>
+                <div class="tl-event-name">Silent Case Update</div>
+                <div class="tl-badges"><span class="badge badge-purple">Officer Touch</span></div>
+              </div>
+              <span class="tl-silent-code">SILENT-UPDATE</span>
+            </div>
+            <div class="tl-event-desc">
+              The case record was updated by USCIS without a formal recorded event code. This typically indicates an officer touched or reviewed the case — such as a supervisory update, internal system note, or case reassignment — that did not generate a standard ELIS event entry.
+            </div>
+            <div class="tl-event-id">Source: updatedAtTimestamp field in case record</div>
+          </div>
+        </div>`;
         }
 
-        const info = getInfo(item.code);
-        const style = getCatStyle(info.cat);
-        return `<div class="timeline-item"><div class="tl-date"><div class="tl-date-main">${dateStr}</div><div class="tl-date-time">${timeStr}</div></div><div class="tl-spine"><div class="tl-dot" style="border-color:${style.dot}"></div>${isLast ? '' : '<div class="tl-line"></div>'}</div><div class="tl-content"><div class="tl-content-top"><div class="tl-event-name">${info.name}</div><span class="tl-event-code">${item.code}</span></div><div class="tl-badges"><span class="badge ${style.cls}">${style.label}</span></div><div class="tl-event-desc">${info.desc}</div>${item.eventId ? `<div class="tl-event-id">Event ID: ${item.eventId} · Date/time based on createdAtTimestamp${item.rawEventDateTime ? ` · eventDateTime: ${fmtFullInTZ(item.rawEventTimestamp || item.rawEventDateTime, tz)}` : ''}</div>` : `<div class="tl-event-id">Date/time based on createdAtTimestamp${item.rawEventDateTime ? ` · eventDateTime: ${fmtFullInTZ(item.rawEventTimestamp || item.rawEventDateTime, tz)}` : ''}</div>`}</div></div>`;
+        // Regular event
+        const info = getInfo(item.code, d.formType);
+        const style = getCatStyle(info.cat, d.formType);
+        return `
+      <div class="timeline-item">
+        <div class="tl-date"><div class="tl-date-main">${dateStr}</div><div class="tl-date-time">${timeStr}</div></div>
+        <div class="tl-spine"><div class="tl-dot" style="border-color:${style.dot}"></div>${isLast ? '' : '<div class="tl-line"></div>'}</div>
+        <div class="tl-content">
+          <div class="tl-content-top">
+            <div class="tl-event-name">${info.name}</div>
+            <span class="tl-event-code">${item.code}</span>
+          </div>
+          <div class="tl-badges"><span class="badge ${style.cls}">${style.label}</span></div>
+          <div class="tl-event-desc">${info.desc}</div>
+          ${item.eventId ? `<div class="tl-event-id">Event ID: ${item.eventId} · Date/time based on createdAtTimestamp${item.rawEventDateTime ? ` · eventDateTime: ${fmtFullInTZ(item.rawEventTimestamp || item.rawEventDateTime, tz)}` : ''}</div>` : `<div class="tl-event-id">Date/time based on createdAtTimestamp${item.rawEventDateTime ? ` · eventDateTime: ${fmtFullInTZ(item.rawEventTimestamp || item.rawEventDateTime, tz)}` : ''}</div>`}
+        </div>
+      </div>`;
       }).join('');
 
       document.getElementById('timeline').innerHTML = tlHTML;
+
+      // ── Summary ─────────────────────────────────────────────
       renderSummary(d, events, notices, codes, daysSub, tz);
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // SUMMARY RENDER
+    // ─────────────────────────────────────────────────────────────
     function renderSummary(d, events, notices, codes, daysSub, tz) {
       const f = ts => fmtFullInTZ(ts, tz);
       const applicant = d.applicantName || 'the applicant';
       const form = d.formType || 'I-485';
 
+      // ── Detection flags ─────────────────────────────────────
       const isApproved = codes.some(c => ['DA', 'DH', 'IEA', 'IEE', 'IEC', 'H008'].includes(c));
       const isDenied = codes.some(c => ['EA', 'IFA'].includes(c));
       const hasInterview = codes.some(c => ['FJ', 'HG'].includes(c));
@@ -462,18 +594,23 @@
       const isAdjAcked = d.ackedByAdjudicatorAndCms;
       const isClosed = d.closed === true;
 
+      // Interview waived: decision reached but no interview events
       const interviewWaived = hasDecision && !hasInterview;
 
+      // ── Stage index (linear progress) ───────────────────────
       let stageIdx = 0;
       if (codes.some(c => ['IAF', 'IAA', 'AALB'].includes(c))) stageIdx = 1;
       if (hasBgChecks) stageIdx = 2;
       if (hasInterview) stageIdx = 3;
       if (hasInterview && hasPostIvChk) stageIdx = 4;
+      // For waived-interview cases, jump from bg checks to decision
       if (interviewWaived) stageIdx = 5;
       if (hasDecision) stageIdx = 5;
 
+      // ── Dynamic progress stages ─────────────────────────────
       let stages;
       if (interviewWaived) {
+        // No interview path: Filed → Receipt → Bg Checks → Interview Waived → Decision
         stages = [
           { name: 'Filed', done: stageIdx >= 1 },
           { name: 'Receipt', done: stageIdx >= 1 },
@@ -482,6 +619,7 @@
           { name: 'Decision', done: stageIdx >= 5 },
         ];
       } else {
+        // Standard interview path: Filed → Receipt → Bg Checks → Interview → Post-Interview → Decision
         stages = [
           { name: 'Filed', done: stageIdx >= 1 },
           { name: 'Receipt', done: stageIdx >= 1 },
@@ -500,13 +638,151 @@
         const connCls = i < stages.length - 1
           ? (stages[i + 1].done ? 'filled' : (s.done ? 'active' : 'pending'))
           : '';
-        return `<div class="progress-step"><div class="progress-step-inner"><div class="progress-step-dot ${cls}">${icon}</div><div class="progress-step-name">${s.name}</div></div></div>${i < stages.length - 1 ? `<div class="progress-connector ${connCls}"></div>` : ''}`;
+        return `
+      <div class="progress-step"><div class="progress-step-inner">
+        <div class="progress-step-dot ${cls}">${icon}</div>
+        <div class="progress-step-name">${s.name}</div>
+      </div></div>
+      ${i < stages.length - 1 ? `<div class="progress-connector ${connCls}"></div>` : ''}`;
       }).join('');
+
+      // ── Key event timestamps ────────────────────────────────
+      const ivNotice = notices.find(n => n.actionType === 'Interview Scheduled');
+      const ivDateStr = ivNotice ? f(ivNotice.appointmentDateTime) : null;
+
+      const h008ev = events.find(e => e.eventCode === 'H008');
+      const h008ts = h008ev ? f(h008ev.createdAtTimestamp || h008ev.eventTimestamp) : null;
+
+      const ldaEv = events.find(e => e.eventCode === 'LDA');
+      const ldaTs = ldaEv ? f(ldaEv.createdAtTimestamp || ldaEv.eventTimestamp) : null;
+
+      const leaEv = events.find(e => e.eventCode === 'LEA');
+      const leaTs = leaEv ? f(leaEv.createdAtTimestamp || leaEv.eventTimestamp) : null;
+
+      const fta1ev = events.find(e => e.eventCode === 'FTA1');
+      const fta1ts = fta1ev ? f(fta1ev.createdAtTimestamp || fta1ev.eventTimestamp) : null;
+
+      // Most recent standard event
+      const sortedEvs = [...events].sort((a, b) => new Date(b.createdAtTimestamp || b.eventTimestamp) - new Date(a.createdAtTimestamp || a.eventTimestamp));
+      const latest = sortedEvs[0];
+      const latestInfo = latest ? getInfo(latest.eventCode, form) : null;
+
+      const cardInfo = getCardInfo(form);
+
+      // ── Build narrative dynamically ─────────────────────────
+      let narrative = '';
+
+      if (isApproved && isClosed) {
+        // ── Fully approved & closed case ──────────────────────
+        narrative = `<p><strong>🎉 Congratulations!</strong> The <strong>${form}</strong> application for <strong>${applicant}</strong> has been <span class="hl-g">APPROVED</span> by USCIS.`;
+        if (interviewWaived) {
+          narrative += ` Notably, USCIS waived the in-person interview and issued a direct approval decision based on the submitted evidence and background check results.`;
+        }
+        narrative += `</p>`;
+        if (h008ts) narrative += `<p>The approval decision (event code <span class="mono" style="font-size:12px;color:var(--gold)">H008</span>) was recorded on <span class="hl">${h008ts}</span>.</p>`;
+        if (hasCardProduced) {
+          narrative += `<p>The ${cardInfo.full} has been <span class="hl-g">produced</span>`;
+          if (ldaTs) narrative += ` on <span class="hl">${ldaTs}</span>`;
+          narrative += `.`;
+          if (hasCardMailed) {
+            narrative += ` The card has been <span class="hl-g">mailed</span>`;
+            if (leaTs) narrative += ` on <span class="hl">${leaTs}</span>`;
+            narrative += `. Expected delivery within 7–10 business days.`;
+          } else if (hasCardRequested) {
+            narrative += ` The card production request has been sent and the card should be mailed shortly.`;
+          }
+          narrative += `</p>`;
+        } else {
+          narrative += `<p>An approval notice should arrive by mail shortly. If not received within 7–10 business days, log in to your USCIS online account to verify your mailing address.</p>`;
+        }
+
+      } else if (isApproved && !isClosed) {
+        // ── Approved but case still open (card pending, etc.) ─
+        narrative = `<p><strong>🎉 Great news!</strong> The <strong>${form}</strong> for <strong>${applicant}</strong> has been <span class="hl-g">APPROVED</span>.`;
+        if (interviewWaived) {
+          narrative += ` The interview was waived and USCIS issued a direct approval based on the evidence on record.`;
+        }
+        narrative += ` The case record remains open, which typically means the ${cardInfo.short} is still being processed or mailed.</p>`;
+        if (h008ts) narrative += `<p>Approval decision (event code <span class="mono" style="font-size:12px;color:var(--gold)">H008</span>) recorded on <span class="hl">${h008ts}</span>.</p>`;
+        if (hasCardProduced && ldaTs) {
+          narrative += `<p>${cardInfo.short} produced on <span class="hl">${ldaTs}</span>.`;
+          if (hasCardMailed && leaTs) narrative += ` Card mailed on <span class="hl">${leaTs}</span> — expected delivery within 7–10 business days.`;
+          narrative += `</p>`;
+        }
+        if (isAdjAcked) narrative += `<p>The case shows <strong>formal acknowledgment by the adjudicating officer and CMS</strong>, confirming the decision has been finalized at the supervisory level.</p>`;
+
+      } else if (isDenied) {
+        // ── Denied ────────────────────────────────────────────
+        narrative = `
+      <p><span class="hl-r">⚠ A denial notice has been issued</span> for the <strong>${form}</strong> of <strong>${applicant}</strong>. If you believe the denial is in error, you may be eligible to file a Motion to Reopen or Reconsider (Form I-290B), or appeal the decision to the Administrative Appeals Office (AAO).</p>
+      <p>Strict deadlines apply to post-denial actions. Please consult a licensed immigration attorney promptly to evaluate your options.</p>`;
+
+      } else if (hasPostIvChk && hasInterview) {
+        // ── Post-interview checks received (with interview) ──
+        narrative = `<p><strong>Your case is in the final adjudication stage following a successful interview.</strong>`;
+        if (ivDateStr) narrative += ` The interview was conducted on or around <span class="hl">${ivDateStr}</span>.`;
+        if (fta1ts) narrative += ` Follow-up background database checks were received on <span class="hl">${fta1ts}</span> (event code <span class="mono" style="font-size:12px;color:var(--gold)">FTA1</span>).`;
+        narrative += `</p>`;
+        if (isAdjAcked) narrative += `<p>The case record shows <strong>formal acknowledgment by both the adjudicating officer and CMS</strong> — a strong positive signal indicating a supervisor is actively conducting a final review.</p>`;
+        narrative += `<p>The case is currently open with <span class="hl-g">no action required from you at this time.</span> A final decision is expected shortly.</p>`;
+
+      } else if (hasPostIvChk && !hasInterview) {
+        // ── Post-adjudication checks without interview ────────
+        narrative = `<p><strong>Your case for <strong>${applicant}</strong> is in the final adjudication stage.</strong> USCIS has completed background database checks`;
+        if (fta1ts) narrative += ` as of <span class="hl">${fta1ts}</span>`;
+        narrative += `. No in-person interview was conducted — the interview appears to have been waived.</p>`;
+        if (isAdjAcked) narrative += `<p>The case shows <strong>formal acknowledgment by the adjudicating officer and CMS</strong>, indicating the case is under active supervisory review for a final decision.</p>`;
+        narrative += `<p>The case is currently open with <span class="hl-g">no action required from you at this time.</span> A decision is expected shortly.</p>`;
+
+      } else if (hasInterview) {
+        // ── Interview happened, awaiting post-interview ───────
+        narrative = `<p><strong>The interview for <strong>${applicant}</strong> has been scheduled/conducted.</strong>`;
+        if (ivDateStr) narrative += ` Interview appointment: <span class="hl">${ivDateStr}</span>.`;
+        narrative += ` The case is now in post-interview adjudication and the officer is reviewing all submitted evidence and background check results.</p>`;
+        narrative += `<p>This stage can take several weeks to a few months depending on the field office. No additional action is required unless USCIS contacts you directly.</p>`;
+
+      } else if (hasRFE) {
+        // ── RFE issued ────────────────────────────────────────
+        narrative = `<p><span class="hl">⚠ A Request for Evidence (RFE) has been issued</span> for the case of <strong>${applicant}</strong>. USCIS requires additional documentation before a decision can be issued. Check your mail and USCIS online account for the RFE notice and respond by the stated deadline — failure to respond may result in a denial.</p>`;
+
+      } else if (hasBgChecks) {
+        // ── Background checks received, no interview yet ──────
+        narrative = `<p><strong>Background checks have been received</strong> for the <strong>${form}</strong> of <strong>${applicant}</strong>. The case is progressing through the standard adjudication pipeline. No interview has been scheduled yet. This is a routine stage; processing times vary by field office workload.</p>`;
+
+      } else {
+        // ── Early stages ──────────────────────────────────────
+        narrative = `<p><strong>The case for <strong>${applicant}</strong> is in early processing stages.</strong> USCIS has received the <strong>${form}</strong> application and is working through initial intake and verification steps.</p>`;
+      }
 
       const updTs = d.updatedAtTimestamp || d.updatedAt;
       const lastUpdStr = updTs ? f(updTs) : '—';
 
-      document.getElementById('summaryCard').innerHTML = `<div class="sum-header"><div class="sum-icon">🗽</div><div><div class="sum-title">Case Overview — ${d.receiptNumber || 'Unknown'}</div><div class="sum-sub">${d.formName || form} &nbsp;·&nbsp; Applicant: <strong>${applicant}</strong></div></div></div><div class="sum-stats"><div class="sum-stat"><div class="sum-stat-val">${daysSub}</div><div class="sum-stat-lbl">Days since filing</div></div><div class="sum-stat"><div class="sum-stat-val">${events.length}</div><div class="sum-stat-lbl">System events logged</div></div><div class="sum-stat"><div class="sum-stat-val">${notices.length}</div><div class="sum-stat-lbl">Official notices issued</div></div></div><div class="progress-track"><div class="progress-label">Adjudication Progress</div><div class="progress-steps">${stepsHTML}</div></div><div class="sum-body"><p><strong>Your case analysis:</strong> Case is currently in progress. Stay tuned for updates.</p><p>Case record last updated: <strong>${lastUpdStr}</strong>.</p><p style="color:var(--green)">✓ Continue monitoring your USCIS online account for updates.</p></div>`;
+      document.getElementById('summaryCard').innerHTML = `
+    <div class="sum-header">
+      <div class="sum-icon">🗽</div>
+      <div>
+        <div class="sum-title">Case Overview — ${d.receiptNumber || 'Unknown'}</div>
+        <div class="sum-sub">${d.formName || form} &nbsp;·&nbsp; Applicant: <strong>${applicant}</strong></div>
+      </div>
+    </div>
+    <div class="sum-stats">
+      <div class="sum-stat"><div class="sum-stat-val">${daysSub}</div><div class="sum-stat-lbl">Days since filing</div></div>
+      <div class="sum-stat"><div class="sum-stat-val">${events.length}</div><div class="sum-stat-lbl">System events logged</div></div>
+      <div class="sum-stat"><div class="sum-stat-val">${notices.length}</div><div class="sum-stat-lbl">Official notices issued</div></div>
+    </div>
+    <div class="progress-track">
+      <div class="progress-label">Adjudication Progress</div>
+      <div class="progress-steps">${stepsHTML}</div>
+    </div>
+    <div class="sum-body">
+      ${narrative}
+      ${latestInfo ? `<p>Most recent system event: <strong>${latestInfo.name}</strong> (code: <span class="mono" style="color:var(--gold);font-size:12px">${latest.eventCode}</span>), recorded on <span class="hl">${f(latest.createdAtTimestamp || latest.eventTimestamp)}</span>.</p>` : ''}
+      <p>Case record last updated: <strong>${lastUpdStr}</strong>.</p>
+      ${d.actionRequired
+          ? `<p><span class="hl-r">⚠ USCIS has flagged this case as requiring action. Please log in to your USCIS online account immediately.</span></p>`
+          : `<p style="color:var(--green)">✓ No action is required from you at this time. Continue monitoring your USCIS online account for updates.</p>`
+        }
+    </div>`;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -519,6 +795,7 @@
       const btn = document.getElementById('qfOpenBtn');
       const urlDisplay = document.getElementById('qfUrlDisplay');
 
+      // Validate: must start with IOE and be at least 10 chars
       const valid = /^IOE[0-9]{7,11}$/.test(raw);
       btn.disabled = !valid;
 
@@ -530,6 +807,7 @@
         urlDisplay.classList.remove('visible');
       }
 
+      // Sync the input to uppercase as the user types
       document.getElementById('qfReceiptInput').value = raw;
     }
 
@@ -548,5 +826,6 @@
       initTheme();
       updateClock();
       setInterval(updateClock, 10000);
+      // Re-check auto theme every 5 minutes (handles sunrise/sunset transitions)
       setInterval(() => { if (themeAuto) applyAutoTheme(); }, 5 * 60 * 1000);
     });
