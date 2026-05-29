@@ -177,7 +177,16 @@
       }
     }
 
-    function getInfo(code, formType) {
+    function getInfo(code, formType, formName) {
+      if (code === 'SA') {
+        const name = formName ? `Approval of ${formName}` : (formType ? `Approval of ${formType}` : 'Application Approved');
+        return {
+          name: name,
+          desc: `The application has been approved by USCIS. An official approval notice has been ordered.`,
+          cat: 'approved'
+        };
+      }
+
       const rawInfo = EVENT_CODES[code];
       if (!rawInfo) {
         return {
@@ -548,7 +557,7 @@
         }
 
         // Regular event
-        const info = getInfo(item.code, d.formType);
+        const info = getInfo(item.code, d.formType, d.formName);
         const style = getCatStyle(info.cat, d.formType);
         return `
       <div class="timeline-item">
@@ -665,7 +674,7 @@
       // Most recent standard event
       const sortedEvs = [...events].sort((a, b) => new Date(b.createdAtTimestamp || b.eventTimestamp) - new Date(a.createdAtTimestamp || a.eventTimestamp));
       const latest = sortedEvs[0];
-      const latestInfo = latest ? getInfo(latest.eventCode, form) : null;
+      const latestInfo = latest ? getInfo(latest.eventCode, form, d.formName) : null;
 
       const cardInfo = getCardInfo(form);
 
