@@ -380,7 +380,7 @@
       <div class="section-divider-line"></div>
     </div>
     <div class="card visitor-map-card">
-      <div style="position:relative;" title="Visitor map with zoom controls">
+      <div style="position:relative;cursor:default;">
         <div class="visitor-map-embed">
           <script type='text/javascript' id='mapmyvisitors'
             src='https://mapmyvisitors.com/map.js?cl=ffffff&w=a&t=tt&d=qkPat3f11qsU2Kt5XJGo_3GHA3vLMGZqsSztXCBO0H4&co=2d78ad&cmo=3acc3a&cmn=ff5353&ct=ffffff'></script>
@@ -388,6 +388,8 @@
             <div style="color:var(--text-muted);font-size:12px">Enable JavaScript to view the visitor map.</div>
           </noscript>
         </div>
+        <!-- Transparent overlay to intercept clicks from the third-party map script -->
+        <div style="position:absolute;inset:0;z-index:10;cursor:default;"></div>
       </div>
     </div>
 
@@ -398,12 +400,10 @@
     <div class="footer-inner">
       <div class="footer-credit">
         Proudly developed with <span class="brand">Claude AI</span> (claude.ai) &nbsp;·&nbsp;
-        In close supervision with <a href="https://sohagkumarsaha.github.io" target="_blank" rel="noopener noreferrer"
-          class="niem-link"><strong>Sohag Kumar Saha</strong></a>
+        In close supervision with <strong>Synavix Labs</strong>
       </div>
       <div class="footer-right">
-        <span>© 2026 <a href="https://sohagkumarsaha.github.io" target="_blank" rel="noopener noreferrer"
-            class="niem-link">Sohag Kumar Saha</a> · All Rights Reserved</span><br>
+        <span>© 2026 Synavix Labs · All Rights Reserved</span><br>
         <span>Event codes: <a href="https://niem.github.io/model/5.0/scr/BenefitDocumentStatusCategoryCodeSimpleType/"
             target="_blank" rel="noopener noreferrer" class="niem-link">NIEM v5.0</a>
           scr:BenefitDocumentStatusCategoryCodeSimpleType</span>
